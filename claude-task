@@ -1,0 +1,164 @@
+#!/bin/bash
+
+# ABOUTME: Manual launcher for headless Claude agents.
+# ABOUTME: Spawns isolated Docker containers that work on GitHub issues or direct prompts.
+
+set -e
+cd ~/claude-docker
+
+# Load environment variables
+set -a
+source .env
+set +a
+
+# Load dispatch config for defaults
+if [ -f dispatch.conf ]; then
+  source dispatch.conf
+fi
+
+AGENT_CPUS="${AGENT_CPUS:-1}"
+AGENT_MEMORY="${AGENT_MEMORY:-2g}"
+IMAGE_NAME="claude-docker-claude-code"
+
+usage() {
+  cat <<EOF
+Usage:
+  claude-task <owner/repo> <issue-number>           Launch agent for a GitHub issue
+  claude-task <owner/repo> --prompt "Fix the bug"   Launch agent with a direct prompt
+  claude-task --status                              Show running agents
+  claude-task --logs <agent-name>                   Tail logs for an agent
+  claude-task --stop <agent-name>                   Stop an agent
+EOF
+  exit 1
+}
+
+cmd_status() {
+  echo "Running Claude agents:"
+  echo ""
+  docker ps --filter "name=claude-agent-" --format "table {{.Names}}\t{{.Status}}\t{{.RunningFor}}" 2>/dev/null || true
+  echo ""
+  echo "Resource usage:"
+  docker stats --no-stream --filter "name=claude-agent-" --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}" 2>/dev/null || true
+}
+
+cmd_logs() {
+  AGENT_NAME="$1"
+  [ -z "$AGENT_NAME" ] && { echo "Usage: claude-task --logs <agent-name>"; exit 1; }
+
+  LOG_FILE="$HOME/claude-docker/logs/${AGENT_NAME}.log"
+  if [ -f "$LOG_FILE" ]; then
+    tail -f "$LOG_FILE"
+  else
+    echo "No log file found at $LOG_FILE"
+    echo "Trying docker logs..."
+    docker logs -f "$AGENT_NAME" 2>/dev/null || echo "Agent '$AGENT_NAME' not found."
+  fi
+}
+
+cmd_stop() {
+  AGENT_NAME="$1"
+  [ -z "$AGENT_NAME" ] && { echo "Usage: claude-task --stop <agent-name>"; exit 1; }
+
+  echo "Stopping agent: $AGENT_NAME"
+  docker stop "$AGENT_NAME" 2>/dev/null && echo "Stopped." || echo "Agent '$AGENT_NAME' not found or already stopped."
+}
+
+cmd_launch() {
+  REPO="$1"
+  shift
+
+  ISSUE=""
+  PROMPT=""
+
+  if [ "$1" = "--prompt" ]; then
+    shift
+    PROMPT="$*"
+    [ -z "$PROMPT" ] && { echo "Error: --prompt requires a prompt string."; exit 1; }
+  else
+    ISSUE="$1"
+    shift 2>/dev/null || true
+    # Check for additional --prompt after issue number
+    if [ "$1" = "--prompt" ]; then
+      shift
+      PROMPT="$*"
+    fi
+  fi
+
+  [ -z "$ISSUE" ] && [ -z "$PROMPT" ] && { echo "Error: provide an issue number or --prompt."; exit 1; }
+
+  # Build image if needed
+  if ! docker images --format '{{.Repository}}' | grep -q "^${IMAGE_NAME}$"; then
+    echo "Building Claude image..."
+    docker compose build claude-code
+  fi
+
+  # Generate agent name
+  REPO_SHORT=$(echo "$REPO" | tr '/' '-')
+  TIMESTAMP=$(date +%s)
+  if [ -n "$ISSUE" ]; then
+    AGENT_NAME="claude-agent-${REPO_SHORT}-${ISSUE}-${TIMESTAMP}"
+  else
+    AGENT_NAME="claude-agent-${REPO_SHORT}-${TIMESTAMP}"
+  fi
+
+  # Ensure logs directory exists
+  mkdir -p "$HOME/claude-docker/logs"
+
+  # Sync fresh credentials from host
+  if [ -f "$HOME/.claude/.credentials.json" ]; then
+    cp "$HOME/.claude/.credentials.json" "$HOME/claude-docker/claude-config/.claude/.credentials.json" 2>/dev/null || true
+  fi
+
+  echo "Launching agent: $AGENT_NAME"
+  echo "  Repo: $REPO"
+  [ -n "$ISSUE" ] && echo "  Issue: #$ISSUE"
+  [ -n "$PROMPT" ] && echo "  Prompt: $PROMPT"
+
+  docker run -d \
+    --name "$AGENT_NAME" \
+    --entrypoint /entrypoint-task.sh \
+    -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+    -e GITHUB_TOKEN="$GITHUB_TOKEN" \
+    -e AGENT_NAME="$AGENT_NAME" \
+    -e TASK_REPO="$REPO" \
+    -e TASK_ISSUE="$ISSUE" \
+    -e TASK_PROMPT="$PROMPT" \
+    -e TASK_LABEL="${TASK_LABEL:-claude}" \
+    -e BRANCH_PREFIX="${BRANCH_PREFIX:-claude}" \
+    -e MONITOR_TIMEOUT_HOURS="${MONITOR_TIMEOUT_HOURS:-4}" \
+    -v "$HOME/claude-docker/logs:/logs" \
+    -v "$HOME/claude-docker/claude-config:/shared-config:ro" \
+    --cpus "$AGENT_CPUS" \
+    --memory "$AGENT_MEMORY" \
+    "$IMAGE_NAME" 2>&1
+
+  echo ""
+  echo "Agent launched: $AGENT_NAME"
+  echo "  Logs: claude-task --logs $AGENT_NAME"
+  echo "  Stop: claude-task --stop $AGENT_NAME"
+}
+
+# ── Parse arguments ──────────────────────────────────────────────
+case "${1:-}" in
+  --status|-s)
+    cmd_status
+    ;;
+  --logs|-l)
+    cmd_logs "$2"
+    ;;
+  --stop)
+    cmd_stop "$2"
+    ;;
+  --help|-h|"")
+    usage
+    ;;
+  *)
+    # First arg should be owner/repo
+    if echo "$1" | grep -q '/'; then
+      cmd_launch "$@"
+    else
+      echo "Error: first argument must be owner/repo (e.g., myorg/myrepo)"
+      usage
+    fi
+    ;;
+esac

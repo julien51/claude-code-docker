@@ -1,0 +1,153 @@
+#!/bin/bash
+
+# ABOUTME: Long-running dispatcher that polls GitHub for claude-labeled issues.
+# ABOUTME: Spawns headless Claude agents for each issue, respecting concurrency limits.
+
+set -e
+cd ~/claude-docker
+
+# Load environment variables
+set -a
+source .env
+set +a
+
+PIDFILE="$HOME/claude-docker/.dispatch.pid"
+
+usage() {
+  cat <<EOF
+Usage:
+  claude-dispatch              Run dispatcher in foreground
+  claude-dispatch --daemon     Run dispatcher in background
+  claude-dispatch --stop       Stop background dispatcher
+  claude-dispatch --status     Show dispatcher status
+EOF
+  exit 1
+}
+
+cmd_stop() {
+  if [ -f "$PIDFILE" ]; then
+    PID=$(cat "$PIDFILE")
+    if kill -0 "$PID" 2>/dev/null; then
+      echo "Stopping dispatcher (PID $PID)..."
+      kill "$PID"
+      rm -f "$PIDFILE"
+      echo "Stopped."
+    else
+      echo "Dispatcher not running (stale PID file). Cleaning up."
+      rm -f "$PIDFILE"
+    fi
+  else
+    echo "No dispatcher running."
+  fi
+}
+
+cmd_status() {
+  if [ -f "$PIDFILE" ]; then
+    PID=$(cat "$PIDFILE")
+    if kill -0 "$PID" 2>/dev/null; then
+      echo "Dispatcher running (PID $PID)"
+    else
+      echo "Dispatcher not running (stale PID file)"
+      rm -f "$PIDFILE"
+    fi
+  else
+    echo "Dispatcher not running"
+  fi
+}
+
+run_dispatch() {
+  # Load config
+  if [ ! -f dispatch.conf ]; then
+    echo "Error: dispatch.conf not found. Create it from the template."
+    exit 1
+  fi
+  source dispatch.conf
+
+  POLL_INTERVAL="${POLL_INTERVAL:-300}"
+  MAX_AGENTS="${MAX_AGENTS:-3}"
+  TASK_LABEL="${TASK_LABEL:-claude}"
+
+  echo "[dispatch] Starting dispatcher"
+  echo "[dispatch] Repos: $REPOS"
+  echo "[dispatch] Poll interval: ${POLL_INTERVAL}s"
+  echo "[dispatch] Max agents: $MAX_AGENTS"
+  echo "[dispatch] Task label: $TASK_LABEL"
+
+  while true; do
+    for REPO in $REPOS; do
+      # Count running agents
+      RUNNING=$(docker ps --filter "name=claude-agent-" --format '{{.Names}}' 2>/dev/null | wc -l)
+      if [ "$RUNNING" -ge "$MAX_AGENTS" ]; then
+        echo "[dispatch] Max agents ($MAX_AGENTS) reached. Skipping poll."
+        break
+      fi
+
+      echo "[dispatch] Checking $REPO for issues labeled '$TASK_LABEL'..."
+      ISSUES=$(gh issue list -R "$REPO" --label "$TASK_LABEL" --json number,title,labels --limit 20 2>/dev/null || echo "[]")
+
+      echo "$ISSUES" | jq -c '.[]' 2>/dev/null | while read -r ISSUE_JSON; do
+        ISSUE_NUM=$(echo "$ISSUE_JSON" | jq -r '.number')
+        ISSUE_TITLE=$(echo "$ISSUE_JSON" | jq -r '.title')
+
+        # Skip if issue also has in-progress label
+        HAS_IN_PROGRESS=$(echo "$ISSUE_JSON" | jq -r '.labels[]?.name' 2>/dev/null | grep -c "claude-in-progress" || true)
+        if [ "$HAS_IN_PROGRESS" -gt 0 ]; then
+          echo "[dispatch] Skipping #$ISSUE_NUM (already in progress): $ISSUE_TITLE"
+          continue
+        fi
+
+        # Skip if agent already running for this issue
+        REPO_SHORT=$(echo "$REPO" | tr '/' '-')
+        if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "claude-agent-${REPO_SHORT}-${ISSUE_NUM}-"; then
+          echo "[dispatch] Skipping #$ISSUE_NUM (agent already running): $ISSUE_TITLE"
+          continue
+        fi
+
+        # Re-check agent count
+        RUNNING=$(docker ps --filter "name=claude-agent-" --format '{{.Names}}' 2>/dev/null | wc -l)
+        if [ "$RUNNING" -ge "$MAX_AGENTS" ]; then
+          echo "[dispatch] Max agents reached. Stopping issue scan."
+          break
+        fi
+
+        echo "[dispatch] Launching agent for #$ISSUE_NUM: $ISSUE_TITLE"
+        "$HOME/claude-docker/claude-task" "$REPO" "$ISSUE_NUM"
+
+      done
+    done
+
+    echo "[dispatch] Sleeping ${POLL_INTERVAL}s..."
+    sleep "$POLL_INTERVAL"
+  done
+}
+
+# ── Parse arguments ──────────────────────────────────────────────
+case "${1:-}" in
+  --daemon|-d)
+    if [ -f "$PIDFILE" ]; then
+      PID=$(cat "$PIDFILE")
+      if kill -0 "$PID" 2>/dev/null; then
+        echo "Dispatcher already running (PID $PID). Use --stop first."
+        exit 1
+      fi
+    fi
+    echo "Starting dispatcher in background..."
+    mkdir -p "$HOME/claude-docker/logs"
+    nohup "$0" > "$HOME/claude-docker/logs/dispatch.log" 2>&1 &
+    echo $! > "$PIDFILE"
+    echo "Dispatcher started (PID $!). Logs: ~/claude-docker/logs/dispatch.log"
+    ;;
+  --stop)
+    cmd_stop
+    ;;
+  --status)
+    cmd_status
+    ;;
+  --help|-h)
+    usage
+    ;;
+  *)
+    # Foreground mode
+    run_dispatch
+    ;;
+esac

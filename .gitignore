@@ -1,0 +1,12 @@
+# Secrets
+.env
+
+# Runtime data
+logs/
+workspace/
+
+# User-specific config (contains credentials and personal settings)
+claude-config/
+
+# Dispatcher state
+.dispatch.pid

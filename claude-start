@@ -1,0 +1,60 @@
+#!/bin/bash
+cd ~/claude-docker
+
+# Load environment variables
+set -a
+source .env
+set +a
+
+# Get session name from argument or generate timestamp
+if [ -n "$1" ]; then
+    SESSION_NAME="claude-session-$1"
+else
+    SESSION_NAME="claude-session-$(date +%Y%m%d-%H%M%S)"
+fi
+
+# Check if session already exists
+if docker ps --format '{{.Names}}' | grep -q "^$SESSION_NAME$"; then
+    # Running — just attach
+    echo "Session '$SESSION_NAME' is running. Attaching..."
+    docker attach "$SESSION_NAME"
+    exit $?
+elif docker ps -a --format '{{.Names}}' | grep -q "^$SESSION_NAME$"; then
+    # Stopped — restart and attach
+    echo "Restarting stopped session '$SESSION_NAME'..."
+    docker start "$SESSION_NAME"
+    docker attach "$SESSION_NAME"
+    exit $?
+fi
+
+# Sync fresh credentials from host before launching
+if [ -f "$HOME/.claude/.credentials.json" ]; then
+    cp "$HOME/.claude/.credentials.json" "$HOME/claude-docker/claude-config/.claude/.credentials.json" 2>/dev/null || true
+fi
+
+# Build image if it doesn't exist
+if ! docker images | grep -q "claude-docker-claude-code"; then
+    echo "Building Claude image..."
+    docker compose build claude-code
+fi
+
+# Start new container in detached mode with unique name
+# - Per-session volume for /root (isolated session state)
+# - Shared config bind mount (read-only) for credentials and settings
+echo "Starting new Claude session: $SESSION_NAME"
+docker run -d \
+    --name "$SESSION_NAME" \
+    -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+    -e GITHUB_TOKEN="$GITHUB_TOKEN" \
+    -v "$HOME/claude-docker/workspace:/workspace" \
+    -v "${SESSION_NAME}:/home/claude" \
+    -v "$HOME/claude-docker/claude-config:/shared-config:ro" \
+    -w /workspace \
+    --cpus 1 \
+    --memory 2g \
+    -it \
+    claude-docker-claude-code
+
+# Attach to the container
+echo "Attaching to $SESSION_NAME..."
+docker attach $SESSION_NAME

@@ -1,0 +1,18 @@
+services:
+  claude-code:
+    build: .
+    container_name: claude-code
+    stdin_open: true
+    tty: true
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+    volumes:
+      - ./workspace:/workspace
+      - claude-compose-data:/home/claude
+      - ./claude-config:/shared-config:ro
+    working_dir: /workspace
+    restart: unless-stopped
+
+volumes:
+  claude-compose-data:

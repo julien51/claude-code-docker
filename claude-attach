@@ -1,0 +1,51 @@
+#!/bin/bash
+
+# Find all running claude session containers
+CONTAINERS=$(docker ps --filter "name=claude-session-" --format "{{.Names}}" | sort -r)
+
+if [ -z "$CONTAINERS" ]; then
+    echo "No running Claude sessions found."
+    echo "Start a new session with: claude-start"
+    exit 1
+fi
+
+# Count containers
+COUNT=$(echo "$CONTAINERS" | wc -l)
+
+if [ $COUNT -eq 1 ]; then
+    # Only one session, attach directly
+    SESSION=$CONTAINERS
+    echo "Attaching to: $SESSION"
+    docker attach $SESSION
+else
+    # Multiple sessions, let user choose
+    echo "Running Claude sessions:"
+    echo ""
+    
+    # Create array and display with numbers
+    i=1
+    while IFS= read -r container; do
+        CREATED=$(docker inspect --format='{{.Created}}' $container | cut -d'T' -f1,2 | tr 'T' ' ' | cut -d'.' -f1)
+        echo "  $i) $container (started: $CREATED)"
+        ((i++))
+    done <<< "$CONTAINERS"
+    
+    echo ""
+    echo -n "Select session (1-$COUNT) or 'q' to quit: "
+    read -r choice
+    
+    if [ "$choice" = "q" ]; then
+        exit 0
+    fi
+    
+    # Validate input
+    if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt $COUNT ]; then
+        echo "Invalid selection"
+        exit 1
+    fi
+    
+    # Get selected container
+    SESSION=$(echo "$CONTAINERS" | sed -n "${choice}p")
+    echo "Attaching to: $SESSION"
+    docker attach $SESSION
+fi
