@@ -14,8 +14,9 @@ RUN apt-get update && apt-get install -y \
     && apt-get install -y gh \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Claude Code globally
-RUN npm install -g @anthropic-ai/claude-code
+# Install Claude Code via native installer and symlink to system PATH
+RUN curl -fsSL https://claude.ai/install.sh | bash \
+    && ln -s /root/.local/bin/claude /usr/local/bin/claude
 
 # Create non-root user for running Claude CLI
 RUN useradd -m -s /bin/bash claude
@@ -41,5 +42,7 @@ COPY entrypoint.sh /entrypoint.sh
 COPY entrypoint-task.sh /entrypoint-task.sh
 RUN chmod +x /common-init.sh /entrypoint.sh /entrypoint-task.sh
 
+ENV DISABLE_AUTOUPDATER=1
+
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["node", "/usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js", "--dangerously-skip-permissions"]
+CMD ["claude", "--dangerously-skip-permissions"]

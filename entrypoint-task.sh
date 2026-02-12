@@ -96,7 +96,7 @@ fi
 chown -R claude:claude "$WORK_DIR"
 
 log "Running Claude on task..."
-CLAUDE_CMD="node /usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js"
+CLAUDE_CMD="claude"
 
 gosu claude $CLAUDE_CMD -p "$PROMPT" --dangerously-skip-permissions 2>&1 | tee -a "$LOG_FILE"
 CLAUDE_EXIT=$?
