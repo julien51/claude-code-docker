@@ -66,13 +66,15 @@ fi
 
 # ── Every-boot setup ────────────────────────────────────────────
 
-# Sync CLAUDE.md and settings.json from shared-config (but NOT credentials —
-# the session may have fresher tokens from Claude Code auto-refresh).
+# Sync CLAUDE.md, settings.json, and credentials from shared-config.
+# Credentials are synced every boot because claude-start always pushes the
+# freshest host credentials into shared-config before starting the container.
 if [ -d /shared-config/.claude ]; then
   mkdir -p "$CLAUDE_HOME/.claude"
   cp /shared-config/.claude/CLAUDE.md "$CLAUDE_HOME/.claude/CLAUDE.md" 2>/dev/null || true
   cp /shared-config/.claude/settings.json "$CLAUDE_HOME/.claude/settings.json" 2>/dev/null || true
-  echo "[INIT] Synced CLAUDE.md and settings.json from shared config." >&2
+  cp /shared-config/.claude/.credentials.json "$CLAUDE_HOME/.claude/.credentials.json" 2>/dev/null || true
+  echo "[INIT] Synced CLAUDE.md, settings.json, and credentials from shared config." >&2
 fi
 
 # Add all /workspace subdirectories as git safe directories

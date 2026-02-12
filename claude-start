@@ -17,6 +17,17 @@ sync_credentials_from() {
         echo "Synced credentials from ${container}." || true
 }
 
+# Helper: push fresh credentials from shared-config into a running container
+sync_credentials_into() {
+    local container="$1"
+    local src="$HOME/claude-docker/claude-config/.claude/.credentials.json"
+    if [ -f "$src" ]; then
+        docker cp "$src" "${container}:/home/claude/.claude/.credentials.json" 2>/dev/null && \
+            docker exec "$container" chown claude:claude /home/claude/.claude/.credentials.json 2>/dev/null && \
+            echo "Pushed fresh credentials into ${container}." || true
+    fi
+}
+
 # Get session name from argument or generate timestamp
 if [ -n "$1" ]; then
     SESSION_NAME="claude-session-$1"
@@ -24,25 +35,27 @@ else
     SESSION_NAME="claude-session-$(date +%Y%m%d-%H%M%S)"
 fi
 
+# Always sync fresh credentials from host into shared-config first
+if [ -f "$HOME/.claude/.credentials.json" ]; then
+    cp "$HOME/.claude/.credentials.json" "$HOME/claude-docker/claude-config/.claude/.credentials.json" 2>/dev/null || true
+fi
+
 # Check if session already exists
 if docker ps --format '{{.Names}}' | grep -q "^$SESSION_NAME$"; then
-    # Running — just attach
+    # Running — push fresh creds and attach
     echo "Session '$SESSION_NAME' is running. Attaching..."
+    sync_credentials_into "$SESSION_NAME"
     docker attach "$SESSION_NAME"
     sync_credentials_from "$SESSION_NAME"
     exit $?
 elif docker ps -a --format '{{.Names}}' | grep -q "^$SESSION_NAME$"; then
-    # Stopped — restart and attach
+    # Stopped — restart, push fresh creds, attach
     echo "Restarting stopped session '$SESSION_NAME'..."
     docker start "$SESSION_NAME"
+    sync_credentials_into "$SESSION_NAME"
     docker attach "$SESSION_NAME"
     sync_credentials_from "$SESSION_NAME"
     exit $?
-fi
-
-# Sync fresh credentials from host before launching
-if [ -f "$HOME/.claude/.credentials.json" ]; then
-    cp "$HOME/.claude/.credentials.json" "$HOME/claude-docker/claude-config/.claude/.credentials.json" 2>/dev/null || true
 fi
 
 # Build image if it doesn't exist
