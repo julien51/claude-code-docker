@@ -1,10 +1,21 @@
 #!/bin/bash
+# ABOUTME: Launches or reattaches to a named interactive Claude session.
+# ABOUTME: Syncs credentials back from the container after detach/exit.
+
 cd ~/claude-docker
 
 # Load environment variables
 set -a
 source .env
 set +a
+
+# Helper: copy credentials from a container's session volume back to shared-config
+sync_credentials_from() {
+    local container="$1"
+    local dest="$HOME/claude-docker/claude-config/.claude/.credentials.json"
+    docker cp "${container}:/home/claude/.claude/.credentials.json" "$dest" 2>/dev/null && \
+        echo "Synced credentials from ${container}." || true
+}
 
 # Get session name from argument or generate timestamp
 if [ -n "$1" ]; then
@@ -18,12 +29,14 @@ if docker ps --format '{{.Names}}' | grep -q "^$SESSION_NAME$"; then
     # Running — just attach
     echo "Session '$SESSION_NAME' is running. Attaching..."
     docker attach "$SESSION_NAME"
+    sync_credentials_from "$SESSION_NAME"
     exit $?
 elif docker ps -a --format '{{.Names}}' | grep -q "^$SESSION_NAME$"; then
     # Stopped — restart and attach
     echo "Restarting stopped session '$SESSION_NAME'..."
     docker start "$SESSION_NAME"
     docker attach "$SESSION_NAME"
+    sync_credentials_from "$SESSION_NAME"
     exit $?
 fi
 
@@ -39,7 +52,7 @@ if ! docker images | grep -q "claude-docker-claude-code"; then
 fi
 
 # Start new container in detached mode with unique name
-# - Per-session volume for /root (isolated session state)
+# - Per-session volume for /home/claude (isolated session state)
 # - Shared config bind mount (read-only) for credentials and settings
 echo "Starting new Claude session: $SESSION_NAME"
 docker run -d \
@@ -57,4 +70,5 @@ docker run -d \
 
 # Attach to the container
 echo "Attaching to $SESSION_NAME..."
-docker attach $SESSION_NAME
+docker attach "$SESSION_NAME"
+sync_credentials_from "$SESSION_NAME"

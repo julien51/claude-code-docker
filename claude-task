@@ -136,6 +136,14 @@ cmd_launch() {
   echo "Agent launched: $AGENT_NAME"
   echo "  Logs: claude-task --logs $AGENT_NAME"
   echo "  Stop: claude-task --stop $AGENT_NAME"
+
+  # Wait for agent to finish, then sync credentials back
+  (
+    docker wait "$AGENT_NAME" >/dev/null 2>&1
+    docker cp "${AGENT_NAME}:/home/claude/.claude/.credentials.json" \
+      "$HOME/claude-docker/claude-config/.claude/.credentials.json" 2>/dev/null && \
+      echo "Synced credentials from ${AGENT_NAME}." || true
+  ) &
 }
 
 # ── Parse arguments ──────────────────────────────────────────────

@@ -27,13 +27,19 @@ RUN mkdir -p /root-template && \
     git config --global user.email "claude@orangepi.local" && \
     cp /root/.gitconfig /root-template/.gitconfig
 
+# Bake skills into the image (avoids runtime GitHub fetch)
+RUN git clone --depth 1 https://github.com/julien51/dotfiles.git /tmp/dotfiles && \
+    cp -r /tmp/dotfiles/.claude/skills /skills-template && \
+    rm -rf /tmp/dotfiles
+
 # Set working directory
 WORKDIR /workspace
 
 # Create entrypoint scripts
+COPY common-init.sh /common-init.sh
 COPY entrypoint.sh /entrypoint.sh
 COPY entrypoint-task.sh /entrypoint-task.sh
-RUN chmod +x /entrypoint.sh /entrypoint-task.sh
+RUN chmod +x /common-init.sh /entrypoint.sh /entrypoint-task.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["node", "/usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js", "--dangerously-skip-permissions"]

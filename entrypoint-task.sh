@@ -31,52 +31,8 @@ log "TASK_PROMPT=$TASK_PROMPT"
 [ -z "$ANTHROPIC_API_KEY" ] && die "ANTHROPIC_API_KEY is required"
 [ -z "$GITHUB_TOKEN" ] && die "GITHUB_TOKEN is required"
 
-# ── Setup (mirrors entrypoint.sh init) ───────────────────────────
-if [ ! -f "$CLAUDE_HOME/.initialized" ]; then
-  log "Setting up home directory..."
-
-  if [ -d /shared-config ]; then
-    [ -f /shared-config/.gitconfig ] && cp /shared-config/.gitconfig "$CLAUDE_HOME/.gitconfig"
-    [ -f /shared-config/.claude.json ] && cp /shared-config/.claude.json "$CLAUDE_HOME/.claude.json"
-
-    if [ -d /shared-config/.claude ]; then
-      mkdir -p "$CLAUDE_HOME/.claude"
-      cp /shared-config/.claude/.credentials.json "$CLAUDE_HOME/.claude/.credentials.json" 2>/dev/null || true
-      cp /shared-config/.claude/CLAUDE.md "$CLAUDE_HOME/.claude/CLAUDE.md" 2>/dev/null || true
-      cp /shared-config/.claude/settings.json "$CLAUDE_HOME/.claude/settings.json" 2>/dev/null || true
-    fi
-
-    if [ -d /shared-config/.claude/projects ]; then
-      mkdir -p "$CLAUDE_HOME/.claude/projects"
-      cp -r /shared-config/.claude/projects/. "$CLAUDE_HOME/.claude/projects/"
-    fi
-  fi
-
-  if [ ! -f "$CLAUDE_HOME/.gitconfig" ] && [ -f /root-template/.gitconfig ]; then
-    cp /root-template/.gitconfig "$CLAUDE_HOME/.gitconfig"
-  fi
-
-  touch "$CLAUDE_HOME/.initialized"
-  log "Home directory initialized."
-fi
-
-# Authenticate gh
-echo "$GITHUB_TOKEN" | gh auth login --with-token 2>/dev/null || true
-
-# Fetch skills from dotfiles
-log "Fetching skills from dotfiles..."
-DOTFILES_DIR="/tmp/dotfiles"
-if [ -d "$DOTFILES_DIR" ]; then
-  git -C "$DOTFILES_DIR" pull --ff-only 2>/dev/null || true
-else
-  git clone --depth 1 https://github.com/julien51/dotfiles.git "$DOTFILES_DIR" 2>/dev/null || true
-fi
-if [ -d "$DOTFILES_DIR/.claude/skills" ]; then
-  mkdir -p "$CLAUDE_HOME/.claude"
-  rm -rf "$CLAUDE_HOME/.claude/skills"
-  cp -r "$DOTFILES_DIR/.claude/skills" "$CLAUDE_HOME/.claude/skills"
-  log "Skills installed."
-fi
+# ── Shared init (config copy, safe dirs, skills, gh auth, ownership) ──
+. /common-init.sh
 
 # ── Clone repo ───────────────────────────────────────────────────
 REPO_NAME=$(echo "$TASK_REPO" | cut -d'/' -f2)
@@ -136,8 +92,7 @@ if [ -n "$TASK_ISSUE" ]; then
     --add-label "claude-in-progress" 2>/dev/null || true
 fi
 
-# ── Fix ownership and run Claude as non-root ─────────────────────
-chown -R claude:claude "$CLAUDE_HOME"
+# ── Fix work dir ownership (CLAUDE_HOME already handled by common-init) ──
 chown -R claude:claude "$WORK_DIR"
 
 log "Running Claude on task..."
