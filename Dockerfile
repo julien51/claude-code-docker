@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y \
 
 # Install Claude Code via native installer and symlink to system PATH
 RUN curl -fsSL https://claude.ai/install.sh | bash \
-    && ln -s /root/.local/bin/claude /usr/local/bin/claude
+    && cp /root/.local/bin/claude /usr/local/bin/claude
 
 # Create non-root user for running Claude CLI
 RUN useradd -m -s /bin/bash claude
