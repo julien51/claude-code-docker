@@ -108,3 +108,10 @@ for dir in /workspace/*/; do
     chown -R claude:claude "$dir/.git/config" 2>/dev/null || true
   fi
 done
+
+# Persist GITHUB_TOKEN for Stop hook (commits learnings to dotclaude)
+if [ -n "$GITHUB_TOKEN" ]; then
+  if ! grep -q "GITHUB_TOKEN" "$CLAUDE_HOME/.bashrc.local" 2>/dev/null; then
+    echo "export GITHUB_TOKEN=$GITHUB_TOKEN" >> "$CLAUDE_HOME/.bashrc.local"
+  fi
+fi
